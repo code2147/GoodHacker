@@ -1,300 +1,264 @@
-import { Text, View, SafeAreaView, TextInput, Alert, Platform } from 'react-native';
-import { useState, useEffect } from 'react';
-import { router } from 'expo-router';
-import * as LocalAuthentication from 'expo-local-authentication';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import Button from '../components/Button';
-import Icon from '../components/Icon';
-import { commonStyles, buttonStyles, colors } from '../styles/commonStyles';
+import { router } from 'expo-router';
+import { MASTER_KEY, sha256, isBiometricSupported, authenticateWithBiometrics, BIOMETRIC_ENABLED_KEY } from '../lib/security';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function LoginScreen() {
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [masterPassword, setMasterPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [storedPasswordHash, setStoredPasswordHash] = useState<string | null>(null);
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [biometricSupported, setBiometricSupported] = useState(false);
-  const [biometricTypes, setBiometricTypes] = useState<string[]>([]);
-  const [hasStoredPassword, setHasStoredPassword] = useState(false);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
 
   useEffect(() => {
-    checkBiometricSupport();
-    checkStoredPassword();
+    initializeAuth();
   }, []);
 
-  const checkBiometricSupport = async () => {
+  const initializeAuth = async () => {
     try {
-      const compatible = await LocalAuthentication.hasHardwareAsync();
-      const enrolled = await LocalAuthentication.isEnrolledAsync();
-      setBiometricSupported(compatible && enrolled);
-
-      if (compatible && enrolled) {
-        const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
-        let supported = [];
-        if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
-          supported.push('Face Recognition');
-        }
-        if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
-          supported.push('Fingerprint');
-        }
-        if (supported.length === 0) supported.push('Biometrics');
-        setBiometricTypes(supported);
+      const savedHash = await SecureStore.getItemAsync(MASTER_KEY);
+      setStoredPasswordHash(savedHash);
+      
+      if (!savedHash) {
+        router.replace('/');
+        return;
       }
-      console.log('Biometric support:', compatible && enrolled, 'Types:', biometricTypes);
-    } catch (error) {
-      console.log('Error checking biometric support:', error);
-    }
-  };
 
-  const checkStoredPassword = async () => {
-    try {
-      const stored = await SecureStore.getItemAsync('goodhackers_master_password');
-      setHasStoredPassword(!!stored);
-      setIsSignUp(!stored);
-      console.log('Has stored master password:', !!stored);
+      const isSupported = await isBiometricSupported();
+      setBiometricSupported(isSupported);
+
+      const biometricEnabledSetting = await SecureStore.getItemAsync(BIOMETRIC_ENABLED_KEY);
+      const isEnabled = biometricEnabledSetting === 'true';
+      setBiometricEnabled(isEnabled);
+
+      if (isSupported && isEnabled) {
+        handleBiometricAuth();
+      }
     } catch (error) {
-      console.log('Error checking stored password:', error);
+      console.error('Error initializing auth:', error);
     }
   };
 
   const handleBiometricAuth = async () => {
     try {
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Authenticate to access Good Hackers',
-        fallbackLabel: 'Use Master Password',
-        cancelLabel: 'Cancel',
-      });
-
-      if (result.success) {
-        console.log('Biometric authentication successful');
+      const success = await authenticateWithBiometrics();
+      if (success) {
         router.replace('/passwords');
-      } else {
-        console.log('Biometric authentication failed or canceled');
-        Alert.alert('Authentication Failed', 'Biometric authentication failed or was canceled.');
       }
     } catch (error) {
-      console.log('Biometric authentication error:', error);
-      Alert.alert('Error', 'Biometric authentication failed');
+      console.error('Biometric auth error:', error);
+      Alert.alert('Authentication Error', 'Failed to authenticate with biometrics. Please use your master password.');
     }
   };
 
-  const handlePasswordAuth = async () => {
-    if (!masterPassword.trim()) {
-      Alert.alert('Error', 'Please enter your master password');
+  const handleUnlock = async () => {
+    if (!storedPasswordHash) return;
+
+    const hashedInput = await sha256(password);
+    if (hashedInput === storedPasswordHash) {
+      setPassword('');
+      router.replace('/passwords');
+    } else {
+      Alert.alert('Error', 'Wrong master password');
+    }
+  };
+
+  const toggleBiometric = async () => {
+    if (!biometricSupported) {
+      Alert.alert('Not Supported', 'Biometric authentication is not available on this device.');
       return;
     }
 
     try {
-      if (isSignUp) {
-        if (masterPassword !== confirmPassword) {
-          Alert.alert('Error', 'Passwords do not match');
-          return;
-        }
-
-        if (masterPassword.length < 8) {
-          Alert.alert('Error', 'Master password must be at least 8 characters long');
-          return;
-        }
-
-        await SecureStore.setItemAsync('goodhackers_master_password', masterPassword);
-        console.log('Master password set for Good Hackers');
-
-        setMasterPassword('');
-        setConfirmPassword('');
-
-        Alert.alert('Success', 'Master password created successfully!', [
-          { text: 'OK', onPress: () => router.replace('/passwords') },
-        ]);
-      } else {
-        const storedPassword = await SecureStore.getItemAsync('goodhackers_master_password');
-        if (storedPassword === masterPassword) {
-          console.log('Master password authentication successful');
-          setMasterPassword('');
-          router.replace('/passwords');
-        } else {
-          Alert.alert('Error', 'Incorrect master password');
-        }
-      }
+      const newState = !biometricEnabled;
+      await SecureStore.setItemAsync(BIOMETRIC_ENABLED_KEY, newState.toString());
+      setBiometricEnabled(newState);
+      
+      Alert.alert(
+        'Biometric Authentication', 
+        newState ? 'Biometric authentication enabled' : 'Biometric authentication disabled'
+      );
     } catch (error) {
-      console.log('Password authentication error:', error);
-      Alert.alert('Error', 'Authentication failed');
+      Alert.alert('Error', 'Failed to update biometric settings');
     }
   };
 
-  const toggleMode = () => {
-    setIsSignUp(!isSignUp);
-    setMasterPassword('');
-    setConfirmPassword('');
-  };
-
   return (
-    <SafeAreaView style={commonStyles.wrapper}>
-      <View style={commonStyles.container}>
-        <View style={{ alignItems: 'center', marginBottom: 50 }}>
-          <View
-            style={{
-              backgroundColor: colors.primary + '20',
-              padding: 25,
-              borderRadius: 40,
-              marginBottom: 20,
-            }}
-          >
-            <Icon name="shield-checkmark" size={50} style={{ color: colors.primary }} />
-          </View>
-
-          <Text style={[commonStyles.title, { fontSize: 28, marginBottom: 8 }]}>Good Hackers</Text>
-
-          <Text
-            style={[
-              commonStyles.text,
-              {
-                textAlign: 'center',
-                opacity: 0.8,
-                fontSize: 16,
-              },
-            ]}
-          >
-            {isSignUp ? 'Create your master password' : 'Welcome back, hacker!'}
-          </Text>
-        </View>
-
-        <View style={{ width: '100%', paddingHorizontal: 20 }}>
-          {biometricSupported && hasStoredPassword && !isSignUp && (
-            <View style={{ marginBottom: 30 }}>
-              <Button
-                text={`Use Biometric Authentication (${biometricTypes.join(', ')})`}
-                onPress={handleBiometricAuth}
-                style={[
-                  buttonStyles.primary,
-                  {
-                    backgroundColor: colors.accent,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  },
-                ]}
-              />
-
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  marginVertical: 20,
-                }}
-              >
-                <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
-                <Text
-                  style={[
-                    commonStyles.text,
-                    {
-                      marginHorizontal: 15,
-                      fontSize: 14,
-                      opacity: 0.6,
-                    },
-                  ]}
-                >
-                  or
-                </Text>
-                <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
-              </View>
-            </View>
-          )}
-
-          <View style={{ marginBottom: 20 }}>
-            <Text
-              style={[
-                commonStyles.text,
-                {
-                  marginBottom: 8,
-                  fontSize: 14,
-                  fontWeight: '600',
-                },
-              ]}
-            >
-              Master Password
-            </Text>
-            <TextInput
-              style={commonStyles.input}
-              placeholder="Enter your master password"
-              placeholderTextColor={colors.textSecondary}
-              value={masterPassword}
-              onChangeText={setMasterPassword}
-              secureTextEntry
-              autoCapitalize="none"
-              autoComplete="password"
-              textContentType="password"
-            />
-          </View>
-
-          {isSignUp && (
-            <View style={{ marginBottom: 20 }}>
-              <Text
-                style={[
-                  commonStyles.text,
-                  {
-                    marginBottom: 8,
-                    fontSize: 14,
-                    fontWeight: '600',
-                  },
-                ]}
-              >
-                Confirm Master Password
-              </Text>
-              <TextInput
-                style={commonStyles.input}
-                placeholder="Confirm your master password"
-                placeholderTextColor={colors.textSecondary}
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry
-                autoCapitalize="none"
-                autoComplete="password"
-                textContentType="password"
-              />
-            </View>
-          )}
-
-          {isSignUp && (
-            <View
-              style={{
-                backgroundColor: colors.backgroundAlt,
-                padding: 15,
-                borderRadius: 8,
-                marginBottom: 20,
-                borderWidth: 1,
-                borderColor: colors.border,
-              }}
-            >
-              <Text
-                style={[
-                  commonStyles.text,
-                  {
-                    fontSize: 12,
-                    opacity: 0.8,
-                    lineHeight: 16,
-                  },
-                ]}
-              >
-                💡 Your master password is the key to all your data. Make it strong and
-                memorable - you cannot recover it if forgotten.
-              </Text>
-            </View>
-          )}
-
-          <Button
-            text={isSignUp ? 'Create Master Password' : 'Unlock Good Hackers'}
-            onPress={handlePasswordAuth}
-            style={[buttonStyles.primary, { opacity: masterPassword.trim() ? 1 : 0.6 }]}
-            disabled={!masterPassword.trim()}
-          />
-
-          {hasStoredPassword && (
-            <Button
-              text={isSignUp ? 'Already have an account? Sign In' : 'Need to reset? Create New'}
-              onPress={toggleMode}
-              style={[buttonStyles.secondary, { marginTop: 15 }]}
-            />
-          )}
-        </View>
+    <View style={styles.container}>
+      <View style={styles.iconContainer}>
+        <Ionicons name="shield-checkmark" size={60} color="white" />
       </View>
-    </SafeAreaView>
+
+      <Text style={styles.title}>Good Hackers</Text>
+      <Text style={styles.subtitle}>Welcome back, hacker!</Text>
+
+      <Text style={styles.label}>Master Password</Text>
+      <View style={styles.inputContainer}>
+        <TextInput
+          placeholder="Enter your master password"
+          placeholderTextColor="#888888"
+          secureTextEntry={!showPassword}
+          style={styles.input}
+          value={password}
+          onChangeText={setPassword}
+          autoCapitalize="none"
+        />
+        <TouchableOpacity
+          style={styles.eyeIcon}
+          onPress={() => setShowPassword(!showPassword)}
+        >
+          <Ionicons name={showPassword ? "eye-off" : "eye"} size={24} color="#888888" />
+        </TouchableOpacity>
+      </View>
+
+      <TouchableOpacity style={styles.unlockButton} onPress={handleUnlock}>
+        <Text style={styles.unlockButtonText}>Unlock Good Hackers</Text>
+      </TouchableOpacity>
+
+      {biometricSupported && (
+        <TouchableOpacity 
+          style={styles.biometricButton}
+          onPress={handleBiometricAuth}
+        >
+          <Ionicons name="finger-print" size={24} color="#4A90E2" />
+          <Text style={styles.biometricButtonText}>Use Fingerprint</Text>
+        </TouchableOpacity>
+      )}
+
+      {biometricSupported && (
+        <TouchableOpacity 
+          style={styles.biometricToggle}
+          onPress={toggleBiometric}
+        >
+          <Text style={styles.biometricToggleText}>
+            Biometric Auth: {biometricEnabled ? 'ON' : 'OFF'}
+          </Text>
+        </TouchableOpacity>
+      )}
+
+      <TouchableOpacity 
+        style={styles.forgotButton}
+        onPress={() => router.push('/reset')}
+      >
+        <Text style={styles.forgotText}>Need to reset? Create New</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  iconContainer: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 32,
+    borderWidth: 2,
+    borderColor: '#4A90E2',
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#b0b0b0',
+    marginBottom: 48,
+  },
+  label: {
+    fontSize: 16,
+    color: '#ffffff',
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+    width: '100%',
+  },
+  inputContainer: {
+    width: '100%',
+    position: 'relative',
+    marginBottom: 32,
+  },
+  input: {
+    width: '100%',
+    height: 56,
+    backgroundColor: '#2d2d2d',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingRight: 56,
+    fontSize: 16,
+    color: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#404040',
+  },
+  eyeIcon: {
+    position: 'absolute',
+    right: 16,
+    top: 16,
+  },
+  unlockButton: {
+    backgroundColor: '#4A90E2',
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  unlockButtonText: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  biometricButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2d2d2d',
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    width: '100%',
+    justifyContent: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#4A90E2',
+  },
+  biometricButtonText: {
+    color: '#4A90E2',
+    fontWeight: 'bold',
+    fontSize: 16,
+    marginLeft: 8,
+  },
+  biometricToggle: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  biometricToggleText: {
+    color: '#888888',
+    fontSize: 14,
+  },
+  forgotButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4A90E2',
+  },
+  forgotText: {
+    color: '#4A90E2',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+});
