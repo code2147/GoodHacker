@@ -10,7 +10,7 @@ This is the first release of "GoodHackers"(password manager) app for those who c
 
 
 #WHY!?
-This password manager is created becoz in this hopeless,dignity less world of companies,etc where there is no value of your privacy.Privacy doesn't just mean having private time of your life or doing anything on internet the point it its your personal life (if your really care and if are really a human being that have a some rules of life) becoz of these some sh!t companies there is sign of privacy now days even just a simple password manager want to access your photos and videos your email and etc so thats enough now use GoodHackers password manager app for your full privacy and securely stored passwords no nonsense straight up to point.
+This password manager is created becoz in this hopeless,dignity less world of companies,etc where there is no value of your privacy.Privacy doesn't just mean having private time of your life or doing anything on internet the point it its your personal life (if your really care and if are really a human being that have a some rules of life) becoz of these some sh!t companies there is no sign of privacy now days even just a simple password manager want to access your photos and videos your email and etc so thats enough now use GoodHackers password manager app for your full privacy and securely stored passwords no nonsense straight up to point.
 
 
 
